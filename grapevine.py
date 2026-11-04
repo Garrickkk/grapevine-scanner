@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""grapevine v0.3: a TCP port and network scanner.
+"""grapevine v0.4: a TCP port and network scanner.
 
 Takes single hosts or whole networks, finds which hosts are up, scans their
-ports (open, closed or filtered), then talks to every open port to identify
-the service and version running on it.
+ports (open, closed or filtered) with a connect scan or a SYN (half-open)
+scan, then talks to every open port to identify the service and version
+running on it.
 
 Only scan hosts and networks you own or have explicit permission to test.
 """
@@ -17,12 +18,13 @@ import sys
 import time
 
 import services
+import synscan
 from discovery import (DISCOVERY_PORTS, HostStatus, discover, is_randomized,
                        looks_intercepted, reverse_dns)
 from scanner import CLOSED, FILTERED, OPEN, run_parallel, scan_ports
 from targets import parse_ports, parse_targets
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 Task = tuple[str, int]  # (ip, port)
 
@@ -45,7 +47,7 @@ def detect_services(tasks: list[Task], timeout: float, workers: int,
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="grapevine: hear what every port has to say. "
-                    "TCP port and network scanner with service detection (v0.3).",
+                    "TCP port and network scanner with service detection (v0.4).",
         epilog="Only scan hosts and networks you own or have permission to test. "
                "scanme.nmap.org is allowed for practice.",
     )
@@ -58,6 +60,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="seconds to wait for each port (default: 1.0)")
     parser.add_argument("-w", "--workers", type=int, default=100,
                         help="number of threads (default: 100)")
+    parser.add_argument("-sS", "--syn", action="store_true",
+                        help="SYN (half-open) scan: faster and stealthier; needs admin "
+                             "rights and scapy (plus Npcap on Windows)")
     parser.add_argument("--sequential", action="store_true",
                         help="scan one port at a time (for comparing speed)")
     parser.add_argument("-a", "--all", action="store_true",
@@ -91,6 +96,15 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    if args.syn and (args.sequential or args.discover_only):
+        other = "--sequential" if args.sequential else "-sn"
+        print(f"error: -sS can't be combined with {other}", file=sys.stderr)
+        return 2
+    if args.syn:
+        reason = synscan.problem()
+        if reason:
+            print(f"error: {reason}", file=sys.stderr)
+            return 1
 
     ips = [t.ip for t in targets]
     typed_names = {t.ip: t.name for t in targets if t.name}
@@ -121,10 +135,15 @@ def main(argv: list[str] | None = None) -> int:
 
         # 2. Port scan
         if live and ports:
+            # The computer doing the scan can't SYN-scan its own addresses.
+            self_ips = {ip for ip in live if synscan.needs_connect_scan(ip)} if args.syn else set()
+            if self_ips:
+                print(f"Note: {', '.join(sort_ips(list(self_ips)))} is this computer, which can't "
+                      "be SYN-scanned; using a connect scan for it.")
             phase = time.perf_counter()
             progress("Scanning ports...")
             tasks = [(ip, port) for ip in live for port in ports]
-            results = scan_ports(tasks, args.timeout, args.workers, args.sequential)
+            results = scan_ports_with(args, tasks, self_ips)
             print(f"{len(live)} host(s) x {len(ports)} port(s) ({time.perf_counter() - phase:.2f}s)")
 
         # 3. Service detection
@@ -158,6 +177,22 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def scan_ports_with(args: argparse.Namespace, tasks: list[Task],
+                    self_ips: set[str]) -> dict[Task, str]:
+    """Run the port scan the user chose: SYN scan (-sS) or connect scan.
+
+    self_ips are this computer's own addresses, which always get a connect scan.
+    """
+    if not args.syn:
+        return scan_ports(tasks, args.timeout, args.workers, args.sequential)
+    self_tasks = [task for task in tasks if task[0] in self_ips]
+    syn_tasks = [task for task in tasks if task[0] not in self_ips]
+    results = scan_ports(self_tasks, args.timeout, args.workers) if self_tasks else {}
+    if syn_tasks:
+        results.update(synscan.syn_scan(syn_tasks, args.timeout))
+    return {task: results[task] for task in tasks}
+
+
 # --------------------------------------------------------------------------
 # Output
 # --------------------------------------------------------------------------
@@ -175,7 +210,12 @@ def print_header(args: argparse.Namespace, targets: list, ports: list[int]) -> N
     if args.discover_only:
         print(f"Discovering hosts in {shown}\n")
         return
-    mode = "sequential" if args.sequential else f"concurrent, {args.workers} threads"
+    if args.syn:
+        mode = "SYN scan"
+    elif args.sequential:
+        mode = "sequential connect scan"
+    else:
+        mode = f"connect scan, {args.workers} threads"
     print(f"Scanning {shown}: {len(ports)} port(s), {mode}\n")
 
 
