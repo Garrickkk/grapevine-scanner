@@ -36,4 +36,4 @@ Windows waits about 2 seconds before reporting a closed port to a normal connect
 - [x] v0.2: service and version detection
 - [x] v0.3: network scanning and host discovery
 - [x] v0.4: SYN (half-open) scanning with scapy
-- [ ] v1.0: CVE lookups, scan history, HTML reports
+- [ ] v1.0: CVE lookups, scan history, HTML reports (currently in development)
