@@ -60,6 +60,13 @@ class TestIdentify(unittest.TestCase):
         self.assertEqual((info.name, info.product, info.version, info.extra),
                          ("http", "nginx", "1.24.0", "Ubuntu"))
 
+    def test_http_server_with_several_details(self):
+        # Real Apache header from XAMPP: brackets on only part of the details.
+        data = b"HTTP/1.1 200 OK\r\nServer: Apache/2.4.58 (Win64) OpenSSL/3.1.3 PHP/8.2.12\r\n\r\n"
+        info = services.identify(data, 80)
+        self.assertEqual((info.product, info.version), ("Apache", "2.4.58"))
+        self.assertEqual(info.details, "Apache 2.4.58 (Win64 OpenSSL/3.1.3 PHP/8.2.12)")
+
     def test_http_without_server_header(self):
         info = services.identify(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n", 8080)
         self.assertEqual((info.name, info.product), ("http", ""))
