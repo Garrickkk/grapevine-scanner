@@ -24,7 +24,7 @@ from discovery import (DISCOVERY_PORTS, HostStatus, discover, is_randomized,
 from scanner import CLOSED, FILTERED, OPEN, run_parallel, scan_ports
 from targets import parse_ports, parse_targets
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 Task = tuple[str, int]  # (ip, port)
 
