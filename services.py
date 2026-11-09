@@ -291,7 +291,9 @@ def parse_http(text: str) -> ServiceInfo:
     # "nginx/1.24.0 (Ubuntu)" -> product, version, extra
     match = re.match(r"([^/\s]+)(?:/(\S+))?(?:\s+(.*))?", server)
     product, version, extra = match.groups() if match else (server, None, None)
-    extra = (extra or "").strip().strip("()")
+    # Unwrap each bracketed part: "(Win64) OpenSSL/3.1.3" -> "Win64 OpenSSL/3.1.3".
+    # (Stripping brackets off the ends only works when there's one part.)
+    extra = re.sub(r"\(([^()]*)\)", r"\1", extra or "").strip()
     return ServiceInfo("http", product, version or "", extra, banner=banner)
 
 
